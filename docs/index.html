@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Fuegos artificiales - Cielo nocturno</title>
+  <style>
+    html,body { height:100%; margin:0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#000; }
+    .stage { position:relative; width:100%; height:100vh; overflow:hidden; background: radial-gradient(ellipse at top, #001029 0%, #000814 50%, #000000 100%); }
+    canvas { position:absolute; left:0; top:0; width:100%; height:100%; display:block; }
+    /* UI */
+    .controls { position:absolute; left:50%; transform:translateX(-50%); bottom:40px; z-index:10; }
+    button#launchBtn { background:linear-gradient(180deg,#ff8a00,#ff4d00); color:white; border:0; padding:14px 22px; font-size:18px; border-radius:10px; cursor:pointer; box-shadow:0 6px 18px rgba(255,77,0,0.25); }
+    button#launchBtn:active { transform:translateY(1px) scale(0.995); }
+    /* small text under button */
+    .hint { text-align:center; color:#cbd5e1; font-size:13px; margin-top:8px; text-shadow:0 1px 2px rgba(0,0,0,0.7);}    
+    /* message bubble when a firework explodes */
+    .msg { position:absolute; left:50%; transform:translateX(-50%); top:20px; color:#fff; text-shadow:0 2px 8px rgba(0,0,0,0.6); pointer-events:none; }
+  </style>
+</head>
+<body>
+  <div class="stage" id="stage">
+    <canvas id="stars"></canvas>
+    <canvas id="fx"></canvas>
+
+    <div class="controls">
+      <button id="launchBtn">presione aqui</button>
+      <div class="hint">Presiona para lanzar fuegos artificiales</div>
+    </div>
+  </div>
+
+<script>
+// Mensajes (siguen el orden pedido)
+const messages = [
+  'buenos dias.',
+  'ten un lindo dia.',
+  'te extraño.',
+  'eres increible.',
+  'un corazon'
+];
+let msgIndex = 0;
+
+// Canvases
+const starsCanvas = document.getElementById('stars');
+const fxCanvas = document.getElementById('fx');
+const stage = document.getElementById('stage');
+const launchBtn = document.getElementById('launchBtn');
+
+const sCtx = starsCanvas.getContext('2d');
+const fCtx = fxCanvas.getContext('2d');
+
+let W, H;
+function resize(){
+  W = stage.clientWidth; H = stage.clientHeight;
+  starsCanvas.width = W; starsCanvas.height = H;
+  fxCanvas.width = W; fxCanvas.height = H;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Stars
+const stars = [];
+const STAR_COUNT = Math.min(300, Math.floor((W*H)/4000));
+for(let i=0;i<STAR_COUNT;i++){
+  stars.push({
+    x: Math.random()*W,
+    y: Math.random()*H*0.75,
+    r: Math.random()*1.2 + 0.2,
+    a: Math.random()*0.8 + 0.2,
+    tw: Math.random()*0.02 + 0.005,
+    t: Math.random()*Math.PI*2
+  });
+}
+function drawStars(){
+  sCtx.clearRect(0,0,W,H);
+  for(let s of stars){
+    s.t += s.tw;
+    const a = s.a + Math.sin(s.t)*0.3;
+    sCtx.beginPath();
+    sCtx.fillStyle = `rgba(255,255,255,${Math.max(0,Math.min(1,a))})`;
+    sCtx.arc(s.x, s.y, s.r, 0, Math.PI*2);
+    sCtx.fill();
+  }
+}
+
+// Fireworks
+class Particle{
+  constructor(x,y, vx, vy, color, life, size){
+    this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.color = color;
+    this.life = life; this.size = size; this.age=0; this.alpha=1;
+  }
+  update(dt){
+    this.vy += 0.02 * dt; // gravity
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vx *= 0.998;
+    this.vy *= 0.998;
+    this.age += dt;
+    this.alpha = Math.max(0, 1 - this.age/this.life);
+  }
+  draw(ctx){
+    ctx.save();
+    ctx.globalAlpha = this.alpha;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class Firework{
+  constructor(sx, sy, tx, ty, color, message){
+    this.sx = sx; this.sy = sy; this.x = sx; this.y = sy; this.tx = tx; this.ty = ty; this.color = color;
+    this.speed = 3.6 + Math.random()*1.0; this.exploded = false; this.message = message;
+    this.particles = [];
+  }
+  update(dt){
+    if(!this.exploded){
+      // move toward target
+      const dx = this.tx - this.x, dy = this.ty - this.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const step = this.speed * dt * 60 / 16; // normalize
+      if(dist < 6){
+        this.explode();
+      } else {
+        this.x += dx/dist * step * 12;
+        this.y += dy/dist * step * 12;
+      }
+    } else {
+      for(let p of this.particles) p.update(dt);
+      // remove dead
+      this.particles = this.particles.filter(p=>p.alpha>0.02);
+    }
+  }
+  explode(){
+    this.exploded = true;
+    // main burst (slightly stronger)
+    const count = 60 + Math.floor(Math.random()*40);
+    for(let i=0;i<count;i++){
+      const angle = Math.random()*Math.PI*2;
+      const speed = (Math.random()*4 + 2);
+      const vx = Math.cos(angle)*speed;
+      const vy = Math.sin(angle)*speed;
+      const hue = Math.floor(Math.random()*360);
+      const color = `hsl(${hue}, 90%, 60%)`;
+      const p = new Particle(this.x, this.y, vx, vy, color, 2.2 + Math.random()*1.3, Math.random()*1.8+0.8);
+      this.particles.push(p);
+    }
+    // bright sparkles
+    for(let i=0;i<12;i++){
+      const p = new Particle(this.x, this.y, (Math.random()-0.5)*1.8, (Math.random()-0.8)*1.8, 'rgba(255,255,255,1)', 1.0, 2.8);
+      this.particles.push(p);
+    }
+    // rain of lights (falling particles)
+    const rainCount = 60 + Math.floor(Math.random()*80);
+    for(let i=0;i<rainCount;i++){
+      const rx = this.x + (Math.random()-0.5)*220;
+      const ry = this.y + (Math.random()-0.5)*80;
+      const rvx = (Math.random()-0.5)*0.6;
+      const rvy = 1 + Math.random()*2.8; // downward
+      const color = `rgba(255, ${150+Math.floor(Math.random()*100)}, ${120+Math.floor(Math.random()*120)}, 1)`;
+      const p = new Particle(rx, ry, rvx, rvy, color, 1.6 + Math.random()*1.2, Math.random()*1.4+0.5);
+      this.particles.push(p);
+    }
+    // create a transient message display
+    explosions.push({x:this.x, y:this.y, text:this.message, age:0, life:2.0});
+  }
+  draw(ctx){
+    if(!this.exploded){
+      ctx.save();
+      ctx.fillStyle = this.color;
+      ctx.beginPath(); ctx.arc(this.x, this.y, 3.5, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    } else {
+      for(let p of this.particles) p.draw(ctx);
+    }
+  }
+}
+
+const fireworks = [];
+const explosions = [];
+
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.06, (now - last)/1000); last = now;
+  // draw
+  fCtx.clearRect(0,0,W,H);
+  // update and draw fireworks
+  for(let fw of fireworks) fw.update(dt);
+  for(let fw of fireworks) fw.draw(fCtx);
+  // draw explosions messages and fade
+  for(let ex of explosions){
+    ex.age += dt;
+    const a = Math.max(0, 1 - ex.age/ex.life);
+    fCtx.save();
+    fCtx.globalAlpha = a;
+    fCtx.fillStyle = 'white';
+    fCtx.font = 'bold 20px sans-serif';
+    fCtx.textAlign = 'center';
+    fCtx.fillText(ex.text, ex.x, ex.y);
+    // small glow
+    fCtx.globalAlpha = a*0.75;
+    fCtx.fillStyle = 'rgba(255,200,60,0.12)';
+    fCtx.beginPath(); fCtx.arc(ex.x, ex.y-6, 30, 0, Math.PI*2); fCtx.fill();
+    fCtx.restore();
+  }
+  // clean explosions
+  while(explosions.length && explosions[0].age > explosions[0].life) explosions.shift();
+  // remove finished fireworks
+  for(let i=fireworks.length-1;i>=0;i--){
+    const fw = fireworks[i];
+    if(fw.exploded && fw.particles.length===0) fireworks.splice(i,1);
+  }
+  drawStars();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// Launch logic: from bottom center to a random height
+function launch(message){
+  const sx = W/2 + (Math.random()-0.5)*80;
+  const sy = H - 10;
+  const tx = Math.random()*(W*0.8) + W*0.1;
+  const ty = Math.random()*(H*0.5) + H*0.08;
+  const color = '#fff';
+  fireworks.push(new Firework(sx, sy, tx, ty, color, message));
+}
+
+launchBtn.addEventListener('click', ()=>{
+  const msg = messages[msgIndex] || '';
+  launch(msg === 'un corazon' ? '❤' : msg);
+  msgIndex = (msgIndex + 1) % messages.length;
+});
+
+// allow pressing Enter/Space when focused
+launchBtn.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launchBtn.click(); }});
+
+// initial gentle star twinkle loop uses drawStars already called each frame
+
+// Rebuild stars on resize
+window.addEventListener('resize', ()=>{
+  const prevCount = stars.length;
+  resize();
+  // if significantly different, rebuild stars array
+  if(Math.abs(STAR_COUNT - Math.floor((W*H)/4000))>10) {
+    stars.length = 0;
+    const newCount = Math.min(400, Math.floor((W*H)/4000));
+    for(let i=0;i<newCount;i++){
+      stars.push({x: Math.random()*W, y: Math.random()*H*0.75, r: Math.random()*1.2+0.2, a: Math.random()*0.8+0.2, tw: Math.random()*0.02+0.005, t: Math.random()*Math.PI*2});
+    }
+  }
+});
+
+// also allow clicking the stage anywhere to launch with next message
+stage.addEventListener('click', (e)=>{
+  // ignore clicks on button
+  const rect = launchBtn.getBoundingClientRect();
+  if(e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) return;
+  const msg = messages[msgIndex] || '';
+  // launch from clicked x toward a point higher than click
+  const sx = e.clientX;
+  const sy = H - 10;
+  const tx = e.clientX;
+  const ty = Math.max(60, e.clientY - 60);
+  fireworks.push(new Firework(sx, sy, tx, ty, '#fff', msg === 'un corazon' ? '❤' : msg));
+  msgIndex = (msgIndex + 1) % messages.length;
+});
+
+</script>
